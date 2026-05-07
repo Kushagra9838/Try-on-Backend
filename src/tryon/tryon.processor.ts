@@ -38,9 +38,9 @@ export class TryonProcessor extends WorkerHost {
       const rawOutput = await this.callReplicateTryon(customerUrl, clothUrl);
 
       console.log('RAW OUTPUT TYPE:', typeof rawOutput);
-console.log('RAW OUTPUT:', rawOutput);
-const resolved = await this.resolveStream(rawOutput);
-console.log('RESOLVED OUTPUT:', resolved);
+      console.log('RAW OUTPUT:', rawOutput);
+      const resolved = await this.resolveStream(rawOutput);
+      console.log('RESOLVED OUTPUT:', resolved);
 
       // 4. extract final image URL
       const resultImageUrl = this.extractOutput(rawOutput);
@@ -89,20 +89,43 @@ console.log('RESOLVED OUTPUT:', resolved);
   private async callReplicateTryon(
     personImage: string,
     clothImage: string,
-  ) {
-    return this.replicate.run('black-forest-labs/flux-2-pro', {
+  ): Promise<string> {
+    const prediction = await this.replicate.predictions.create({
+      model: 'reve/remix',
       input: {
         prompt: `
-A realistic photo of the same person from the first image,
-now wearing the clothing from the second image.
-Maintain realistic lighting, shadows, and fabric details.
+  A realistic photo of the same person from the first image,
+  now wearing the clothing from the second image.
+  Maintain realistic lighting, shadows, and fabric details.
         `,
-        input_images: [personImage, clothImage],
+
+        reference_images: [personImage, clothImage],
+
         aspect_ratio: '1:1',
-        resolution: '1 MP',
-        safety_tolerance: 2,
+        output_format: 'png',
       },
     });
+
+    console.log('PREDICTION:', prediction);
+
+    // wait until completed
+    const finalPrediction = await this.replicate.wait(prediction);
+
+    console.log('FINAL:', finalPrediction);
+
+    // extract URL
+    if (typeof finalPrediction.output === 'string') {
+      return finalPrediction.output;
+    }
+
+    if (
+      Array.isArray(finalPrediction.output) &&
+      finalPrediction.output.length > 0
+    ) {
+      return finalPrediction.output[0];
+    }
+
+    throw new Error('No output image returned');
   }
 
   // -------------------------
@@ -110,22 +133,22 @@ Maintain realistic lighting, shadows, and fabric details.
   // -------------------------
   private extractOutput(output: any): string | null {
     if (!output) return null;
-  
+
     // Case 1: direct string (MOST COMMON in Replicate SDK)
     if (typeof output === 'string') {
       return output;
     }
-  
+
     // Case 2: array
     if (Array.isArray(output)) {
       return output[0] || null;
     }
-  
+
     // Case 3: object format (API style response)
     if (typeof output === 'object') {
       return output.output?.[0] || output.output || null;
     }
-  
+
     return null;
   }
 
@@ -133,17 +156,17 @@ Maintain realistic lighting, shadows, and fabric details.
     if (!(output instanceof ReadableStream)) {
       return output;
     }
-  
+
     const reader = output.getReader();
     const decoder = new TextDecoder();
     let result = '';
-  
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       result += decoder.decode(value);
     }
-  
+
     return JSON.parse(result);
   }
 }
